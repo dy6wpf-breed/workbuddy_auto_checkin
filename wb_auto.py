@@ -336,8 +336,15 @@ def main():
         return 2
 
     headers = build_headers(token)
-    log("鉴权头: X-User-Id=%s X-Domain=%s（token 长度 %d）"
-        % (headers["X-User-Id"] or "<空>", headers["X-Domain"], len(token)))
+    # 诊断：token 指纹（只打印长度与SHA前8位，不打印明文）
+    import hashlib
+    tlen = len(token)
+    tfp = hashlib.sha256(token.encode()).hexdigest()[:8]
+    segs = token.count(".") + 1
+    log("TOKEN_DIAG 长度=%d 指纹=%s 段数=%d 首4=%s 尾4=%s"
+        % (tlen, tfp, segs, token[:4], token[-4:]))
+    log("HEADER_DIAG uid=%s domain=%s"
+        % (headers["X-User-Id"] or "<空>", headers["X-Domain"]))
 
     log("=== 1/2 签到 ===")
     checkin_ok, checkin = run_checkin(headers, endpoint)
