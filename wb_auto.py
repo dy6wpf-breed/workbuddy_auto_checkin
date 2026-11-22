@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""wb_auto.py —— 云端 runner 执行的每日自动化：签到 + 派猫猫旅行，结果推飞书。
+"""wb_auto.py —— 云端 runner 执行的每日自动化：签到 + 派猫猫旅行，结果写入运行汇总。
 
 设计要点：
   1. 一次运行把签到与派猫都做掉；
@@ -292,83 +292,15 @@ def run_buddy(headers, endpoint):
         return {"result": "ERROR", "report": "猫猫模块异常（%s: %s）" % (type(e).__name__, e), "notes": notes}
 
 
-# ---------------------------------------------------------------- 飞书
-
-def push_feishu(webhook, title, checkin_line, buddy_line, overall_ok):
-    """推送到飞书自定义机器人。返回 (ok, reason)。
-
-    重试策略与业务请求、WPS 版保持一致：
-      - 网络异常 / HTTP 5xx → 自动重试（最多 MAX_RETRY 次，退避），瞬时故障自愈
-      - 飞书业务拒绝（19001 地址无效、机器人开启签名校验等）→ 不重试（重试无用），
-        原因带改法返回，写入结果供 step summary 展示
-    兜底：脚本幂等，当天 cron 有多个时段时，下一次运行会自动再推一遍当天结果。
-    """
-    color = "green" if overall_ok else "red"
-    lines = [
-        "**%s**" % title,
-        "",
-        "**签到**",
-        checkin_line,
-        "",
-        "**猫猫旅行**",
-        buddy_line,
-    ]
-    payload = {
-        "msg_type": "interactive",
-        "card": {
-            "config": {"wide_screen_mode": True},
-            "header": {
-                "template": color,
-                "title": {"tag": "plain_text",
-                          "content": "Buddy 加油站 · %s" % ("成功" if overall_ok else "部分失败")},
-            },
-            "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}}],
-        },
-    }
-    data = json.dumps(payload).encode("utf-8")
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            req = urllib.request.Request(webhook, data=data, method="POST",
-                                         headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=15, context=ssl.create_default_context()) as resp:
-                body = json.loads(resp.read().decode("utf-8", "replace"))
-                log("  [飞书] HTTP %s %s" % (resp.status, json.dumps(body, ensure_ascii=False)))
-                if body.get("code") == 0:
-                    return True, ""
-                return False, ("飞书返回码 %s（19001 多为地址不对；机器人若开了签名校验也会失败。"
-                               "这是配置问题，重试无用：检查 Secret FEISHU_WEBHOOK，或建机器人时"
-                               "不要勾选签名校验）" % body.get("code", "未知"))
-        except urllib.error.HTTPError as e:
-            if e.code >= 500 and attempt < MAX_RETRY:
-                log("  [飞书] HTTP %s，退避后重试（%d/%d）" % (e.code, attempt, MAX_RETRY))
-                time.sleep(2.0 * attempt)
-                continue
-            if e.code >= 500:
-                return False, "重试 %d 次后仍 HTTP %s" % (MAX_RETRY, e.code)
-            return False, "HTTP %s" % e.code
-        except Exception as e:
-            if attempt < MAX_RETRY:
-                log("  [飞书] 请求异常，退避后重试（%d/%d）：%s: %s"
-                    % (attempt, MAX_RETRY, type(e).__name__, e))
-                time.sleep(2.0 * attempt)
-                continue
-            return False, "重试 %d 次后仍异常：%s: %s" % (MAX_RETRY, type(e).__name__, e)
-
-
 # ---------------------------------------------------------------- 主流程
 
 def main():
     token = os.environ.get("WB_ACCESS_TOKEN")
-    webhook = os.environ.get("FEISHU_WEBHOOK")
     endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
 
     if not token:
         log("缺少环境变量 WB_ACCESS_TOKEN（请在本机运行 refresh_token.py 注入 GitHub Secret）")
         return 2
-    if not webhook:
-        log("缺少环境变量 FEISHU_WEBHOOK")
 
     headers = {
         "Accept": "application/json",
@@ -394,15 +326,9 @@ def main():
     checkin_line = ("✅ " if checkin_ok else "❌ ") + checkin["report"]
     buddy_line = ("🐱 " + buddy.get("report", "")) if buddy.get("report") else "🐱 无结论"
 
-    # 推送状态与业务结论分开呈现：失败原因可诊断，但不污染签到结论
-    push_ok, push_reason = None, "未配置（缺少 FEISHU_WEBHOOK，本次不推送）"
-    if webhook:
-        push_ok, push_reason = push_feishu(webhook, "每日自动化", checkin_line, buddy_line, overall_ok)
-
     result = {
         "checkin": {"ok": checkin_ok, **checkin},
         "buddy": {k: v for k, v in buddy.items() if k != "notes"},
-        "push": {"ok": push_ok, "reason": push_reason},
         "overall_ok": overall_ok,
     }
     print("RESULT_JSON " + json.dumps(result, ensure_ascii=False))
@@ -411,13 +337,10 @@ def main():
     result_file = os.environ.get("WB_RESULT_FILE")
     if result_file:
         try:
-            push_line = ("✅ 已推送到飞书" if push_ok
-                         else "❌ 推送失败：%s" % push_reason)
             with open(result_file, "w", encoding="utf-8") as f:
                 f.write("| 项目 | 结论 |\n| --- | --- |\n")
                 f.write("| 签到 | %s |\n" % checkin_line)
                 f.write("| 猫猫旅行 | %s |\n" % buddy_line)
-                f.write("| 飞书推送 | %s |\n" % push_line)
                 f.write("| 整体 | %s |\n" % ("成功（签到已达成）" if overall_ok else "失败（签到未达成）"))
         except OSError as e:
             log("结果文件写入失败：%s" % e)

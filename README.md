@@ -1,6 +1,11 @@
 # workbuddy_auto_checkin
 
-WorkBuddy「Buddy 加油站」的每日自动化：**签到领积分**、**派猫猫旅行并领回礼物**，结果推送到飞书。
+> **本地修改版说明（2026-11-22）**：本副本已按使用者要求**移除飞书推送**。
+> 云端只需配置一个 Secret：`WB_ACCESS_TOKEN`（不再需要 `FEISHU_WEBHOOK`）。
+> 运行结果查看 GitHub Actions 的日志与 Step summary 汇总表即可。
+> 下文涉及「飞书」「FEISHU_WEBHOOK」的步骤均可跳过；签到与派猫逻辑未改动。
+
+WorkBuddy「Buddy 加油站」的每日自动化：**签到领积分**、**派猫猫旅行并领回礼物**，结果推送到飞书（上游原版行为，本副本已关闭）。
 
 跑在 GitHub Actions 上，按 cron 每天定时执行，不需要任何常开设备。
 
