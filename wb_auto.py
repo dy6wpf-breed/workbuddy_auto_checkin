@@ -85,6 +85,9 @@ def request(url, headers, method="GET", payload=None, retry=True):
                     return resp.status, {"raw": raw[:300]}
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", "replace")
+            if e.code in (401, 403):
+                # 诊断：网关拒绝时打印响应原文（仅 HTML 通常是 WAF/风控页）
+                log("  · HTTP %s 响应原文: %s" % (e.code, raw[:400].replace("\n", " ")))
             try:
                 body = json.loads(raw)
             except ValueError:
