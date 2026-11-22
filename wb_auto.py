@@ -11,6 +11,7 @@
 凭证来自 GitHub Secret（由本机 refresh_token.py 注入），只读环境变量，不落盘、不打日志。
 """
 
+import base64
 import json
 import os
 import ssl
@@ -294,6 +295,34 @@ def run_buddy(headers, endpoint):
 
 # ---------------------------------------------------------------- 主流程
 
+def build_headers(token):
+    """从 token 的 JWT 载荷解析 uid/domain，构造完整鉴权头。
+
+    copilot.tencent.com 的网关要求 X-User-Id / X-Domain；只带 Authorization
+    会被网关以 401 HTML 拒绝。解析失败时回退到常见默认值。
+    """
+    uid, domain = "", "www.workbuddy.cn"
+    try:
+        seg = token.split(".")[1]
+        seg += "=" * (-len(seg) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(seg))
+        uid = payload.get("sub") or ""
+        iss = payload.get("iss") or ""
+        if "://" in iss:
+            domain = iss.split("://", 1)[1].split("/", 1)[0] or domain
+    except Exception:
+        pass
+    return {
+        "Accept": "application/json",
+        "Authorization": "Bearer %s" % token,
+        "Content-Type": "application/json",
+        "X-User-Id": uid,
+        "X-Domain": domain,
+        "User-Agent": "Mozilla/5.0 WorkBuddy/5.3",
+        "Referer": "https://www.workbuddy.cn/",
+    }
+
+
 def main():
     token = os.environ.get("WB_ACCESS_TOKEN")
     endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
@@ -302,12 +331,9 @@ def main():
         log("缺少环境变量 WB_ACCESS_TOKEN（请在本机运行 refresh_token.py 注入 GitHub Secret）")
         return 2
 
-    headers = {
-        "Accept": "application/json",
-        "Authorization": "Bearer %s" % token,
-        "Content-Type": "application/json",
-        "User-Agent": "WorkBuddy",
-    }
+    headers = build_headers(token)
+    log("鉴权头: X-User-Id=%s X-Domain=%s（token 长度 %d）"
+        % (headers["X-User-Id"] or "<空>", headers["X-Domain"], len(token)))
 
     log("=== 1/2 签到 ===")
     checkin_ok, checkin = run_checkin(headers, endpoint)
