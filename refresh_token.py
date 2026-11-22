@@ -314,10 +314,21 @@ def main():
 
     # 有 gh 且指定了仓库 → 自动写入；否则统一走「指引 + 起止标记 + token」，
     # 保证无论是终端跑 .py 还是双击 exe，输出结构一致、都能照着做
-    if gh_repo and shutil.which("gh") is not None:
+    # 定位 gh：PATH → 常见安装路径兜底（PowerShell 未刷新 PATH 时仍可用）
+    gh_bin = shutil.which("gh")
+    if not gh_bin:
+        for candidate in (
+            r"C:\Program Files\GitHub CLI\gh.exe",
+            r"C:\Program Files (x86)\GitHub CLI\gh.exe",
+            os.path.expanduser(r"~\AppData\Local\GitHub CLI\gh.exe"),
+        ):
+            if os.path.isfile(candidate):
+                gh_bin = candidate
+                break
+    if gh_repo and gh_bin:
         # 明文 token 只作为 stdin 传给 gh，不出现在命令行与进程列表中
         proc = subprocess.run(
-            ["gh", "secret", "set", "WB_ACCESS_TOKEN", "--repo", gh_repo, "--body", "-"],
+            [gh_bin, "secret", "set", "WB_ACCESS_TOKEN", "--repo", gh_repo, "--body", "-"],
             input=token.encode("utf-8"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
